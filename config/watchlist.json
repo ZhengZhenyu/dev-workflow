@@ -1,10 +1,10 @@
 {
   "watched_repos": [
     {
-      "repo": "owner/repo-name",
+      "repo": "opensourceways/community-health",
       "trigger_labels": ["rfc", "bug"],
       "enabled": true,
-      "description": "示例：监控某个项目的 RFC 和 Bug"
+      "description": "community-health 项目"
     }
   ],
   "settings": {
