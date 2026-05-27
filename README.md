@@ -52,9 +52,12 @@
 2. 为 Issue 添加 `rfc` 或 `bug` 标签
 3. AI 将自动开始执行技术设计分析流程
 
-### 方式二：跨仓库监控（推荐）
+### 方式二：跨仓库监控（推荐，零配置）
 
-当需要在其他仓库触发 AI 分析时：
+**优势：**
+- ✅ 源仓库无需任何配置和工作流
+- ✅ 所有 AI 分析在 dev-workflow 仓库执行，集中管理
+- ✅ 只需在 dev-workflow 中维护监控列表
 
 #### 1. 配置 GitHub Token
 
@@ -64,35 +67,44 @@
   - 路径：GitHub Settings → Developer settings → Personal access tokens
 - 添加到仓库 Secrets
   - 路径：dev-workflow 仓库 → Settings → Secrets and variables → Actions
-  - Name: `DISPATCH_TOKEN`
+  - Name: `WATCH_TOKEN`（推荐）或 `DISPATCH_TOKEN`
   - Secret: 粘贴生成的 token
 
-**在每个需要监控的源仓库中配置：**
-- 使用同一个 PAT
-- 添加到源仓库 Secrets
-  - 路径：源仓库 → Settings → Secrets and variables → Actions
-  - Name: `DISPATCH_TOKEN`
-  - Secret: 粘贴 token
+#### 2. 配置监控仓库列表
 
-#### 2. 部署触发工作流到源仓库
+编辑 [`config/watchlist.json`](file:///Users/zhengzhenyu/work/dev-workflow/config/watchlist.json)，添加需要监控的仓库：
 
-将 [`.github/workflows/cross-repo-dispatch.yml`](file:///Users/zhengzhenyu/work/dev-workflow/.github/workflows/cross-repo-dispatch.yml) 复制到源仓库的对应位置：
-
+```json
+{
+  "watched_repos": [
+    {
+      "repo": "owner/repo-name",
+      "trigger_labels": ["rfc", "bug"],
+      "enabled": true,
+      "description": "项目描述"
+    }
+  ],
+  "settings": {
+    "poll_interval_minutes": 5,
+    "max_events_per_run": 50,
+    "lookback_minutes": 10
+  }
+}
 ```
-源仓库/
-└── .github/
-    └── workflows/
-        └── cross-repo-dispatch.yml
-```
 
-**重要**：编辑文件第 44 行，修改为目标仓库地址：
-```yaml
-https://api.github.com/repos/你的用户名/dev-workflow/dispatches
-```
+**配置说明：**
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `repo` | 仓库地址 | `owner/repo-name` |
+| `trigger_labels` | 触发标签 | `["rfc", "bug"]` |
+| `enabled` | 是否启用 | `true` / `false` |
+| `poll_interval_minutes` | 轮询间隔（分钟） | `5` |
+| `lookback_minutes` | 每次查询回溯时间（分钟） | `10` |
 
 #### 3. 提供项目规范（可选但推荐）
 
-为了让 AI 分析更贴合你的项目，建议在源仓库中提供以下文件（会自动识别）：
+在**源仓库**中提供以下文件（dev-workflow 会自动读取）：
 
 | 文件路径 | 用途 | 优先级 |
 |---------|------|--------|
@@ -110,7 +122,7 @@ AI 会在分析时自动读取并遵守这些规范。
 在**源仓库**中：
 1. 创建 Issue
 2. 添加 `rfc` 或 `bug` 标签
-3. 自动触发：
+3. 等待最多 5 分钟（轮询间隔），自动触发：
    - ✅ 源 Issue 被打上 `ai-pending` 标签
    - ✅ 源 Issue 收到进度看板评论
    - ✅ dev-workflow 仓库开始执行 AI 分析
