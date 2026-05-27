@@ -43,9 +43,9 @@ def parse_env() -> Dict[str, Any]:
     if not issue_number:
         raise ValueError('env ISSUE_NUMBER required')
     
-    github_repo = os.getenv('GITHUB_REPOSITORY', '')
+    github_repo = os.getenv('TARGET_REPO') or os.getenv('GITHUB_REPOSITORY', '')
     if '/' not in github_repo:
-        raise ValueError('env GITHUB_REPOSITORY required')
+        raise ValueError('env TARGET_REPO or GITHUB_REPOSITORY required')
     
     owner, repo = github_repo.split('/', 1)
     

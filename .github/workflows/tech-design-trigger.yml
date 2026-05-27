@@ -289,7 +289,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           ISSUE_TITLE: ${{ github.event.client_payload.issue_title }}
           ISSUE_BODY: ${{ github.event.client_payload.issue_body }}
-          GITHUB_REPOSITORY: ${{ github.event.client_payload.source_repo }}
+          TARGET_REPO: ${{ github.event.client_payload.source_repo }}
         run: python scripts/stages/00-phase0-clarification.py
 
       - name: Wait for user response (Phase 0)
@@ -427,7 +427,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
           ISSUE_TITLE: ${{ github.event.client_payload.issue_title }}
           ISSUE_BODY: ${{ github.event.client_payload.issue_body }}
-          GITHUB_REPOSITORY: ${{ github.event.client_payload.source_repo }}
+          TARGET_REPO: ${{ github.event.client_payload.source_repo }}
         run: python scripts/stages/00-phase0-clarification.py
 
       - name: Wait for user response (Phase 0)
