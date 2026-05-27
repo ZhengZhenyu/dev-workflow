@@ -80,7 +80,7 @@ async def main():
     except Exception as e:
         log_stage('phase1', f'⚠ 添加标签失败(忽略): {e}')
     
-    # 运行 opencode（不使用 agent，纯文本分析）
+    # 运行 opencode
     result = run_opencode(
         prompt_file=agent_prompt_file('requirement-analyst'),
         context={
@@ -91,18 +91,12 @@ async def main():
             },
             'phase0_answers': phase0_answers,
         },
-        instruction='基于 issue 内容，产出完整的需求分析报告。',
+        instruction='基于 issue 内容和 Phase 0 收集的信息（如果有），产出完整的需求分析报告。',
         work_dir=work_dir,
         output_file=output_file,
         label='phase1',
-        agent='',  # 空 agent = 纯 LLM 调用，不探索代码
         conventions_file=get_conventions_file(),
     )
-    
-    # 检查输出文件是否存在
-    if not os.path.exists(output_file):
-        log_stage('phase1', '⚠ 输出文件未生成（可能超时），跳过评论和状态更新')
-        return
     
     # 评论 issue
     await comment_agent_output(
