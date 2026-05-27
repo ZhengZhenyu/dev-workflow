@@ -2,7 +2,7 @@
   "watched_repos": [
     {
       "repo": "opensourceways/community-health",
-      "trigger_labels": ["rfc", "bug"],
+      "trigger_labels": ["feature", "bug"],
       "enabled": true,
       "description": "community-health 项目"
     }
