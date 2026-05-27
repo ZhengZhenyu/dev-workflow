@@ -141,8 +141,98 @@ def mark_issue_processed(issue_id: int, repo: str, state: Dict[str, Any]):
     state.setdefault('processed_issues', {})[key] = {
         'timestamp': datetime.now().isoformat(),
         'repo': repo,
-        'issue_id': issue_id
+        'issue_id': issue_id,
+        'last_comment_check': None
     }
+
+
+def fetch_issue_comments(
+    repo: str,
+    issue_number: int,
+    since: Optional[str],
+    token: str
+) -> List[Dict[str, Any]]:
+    """获取 Issue 的评论"""
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+    params = {
+        'per_page': 30,
+        'sort': 'created',
+        'direction': 'desc'
+    }
+    if since:
+        params['since'] = since
+
+    try:
+        response = requests.get(url, headers=get_github_headers(token), params=params, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        log(f"  ❌ Failed to fetch comments for #{issue_number}: {e}")
+        return []
+
+
+def check_for_command(
+    repo: str,
+    issue_number: int,
+    issue_state: Dict[str, Any],
+    token: str
+) -> Optional[Dict[str, str]]:
+    """检查是否有新的命令评论（/accept, /retry）"""
+    last_check = issue_state.get('last_comment_check')
+    comments = fetch_issue_comments(repo, issue_number, last_check, token)
+
+    for comment in comments:
+        body = (comment.get('body') or '').strip()
+        first_line = body.split('\n')[0].strip()
+
+        if first_line.startswith('/accept') or first_line.startswith('/retry'):
+            return {
+                'command': first_line.split()[0],
+                'comment_id': str(comment['id']),
+                'comment_user': comment.get('user', {}).get('login', ''),
+                'comment_body': first_line,
+            }
+
+    return None
+
+
+def trigger_command_dispatch(
+    repo: str,
+    issue: Dict[str, Any],
+    command: Dict[str, str],
+    token: str
+) -> bool:
+    """触发命令处理"""
+    issue_number = issue['number']
+    issue_title = issue.get('title', '')
+    issue_body = issue.get('body') or ''
+
+    target_repo = os.getenv('GITHUB_REPOSITORY', '') or 'ZhengZhenyu/dev-workflow'
+    dispatch_url = f"https://api.github.com/repos/{target_repo}/dispatches"
+
+    payload = {
+        'event_type': 'watched-issue-command',
+        'client_payload': {
+            'issue_number': issue_number,
+            'issue_title': issue_title,
+            'issue_body': issue_body,
+            'source_repo': repo,
+            'command': command['command'],
+            'comment_id': command['comment_id'],
+        }
+    }
+
+    try:
+        response = requests.post(dispatch_url, headers=get_github_headers(token), json=payload, timeout=30)
+        if response.status_code == 204:
+            log(f"  ✅ Command dispatch sent: {command['command']}")
+            return True
+        else:
+            log(f"  ❌ Command dispatch failed: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        log(f"  ❌ Command dispatch error: {e}")
+        return False
 
 
 def trigger_ai_analysis(issue: Dict[str, Any], repo: str, token: str):
@@ -204,6 +294,55 @@ def trigger_ai_analysis(issue: Dict[str, Any], repo: str, token: str):
     except Exception as e:
         log(f"  ❌ Failed to send dispatch: {e}")
         return False
+
+
+def check_commands_on_tracked_issues(
+    watch_token: str,
+    dispatch_token: str,
+    state: Dict[str, Any]
+):
+    """检查已处理的 Issue 上是否有 /accept 和 /retry 命令"""
+    processed = state.get('processed_issues', {})
+    if not processed:
+        return
+
+    log(f"\n📝 Checking commands on {len(processed)} tracked issues...")
+
+    for key, issue_state in processed.items():
+        repo = issue_state.get('repo', '')
+        issue_number = issue_state.get('issue_id')
+
+        if not repo or not issue_number:
+            continue
+
+        command = check_for_command(repo, issue_number, issue_state, watch_token)
+
+        if command:
+            log(f"  🔔 Command detected on #{issue_number} in {repo}: {command['command']}")
+
+            # 获取 Issue 信息
+            issue_data = {'number': issue_number, 'title': '', 'body': ''}
+            try:
+                owner, repo_name = repo.split('/', 1)
+                url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+                resp = requests.get(url, headers=get_github_headers(watch_token), timeout=30)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    issue_data = {
+                        'number': data['number'],
+                        'title': data.get('title', ''),
+                        'body': data.get('body') or '',
+                    }
+            except Exception as e:
+                log(f"  ⚠️  Failed to get issue #{issue_number}: {e}")
+                continue
+
+            trigger_command_dispatch(repo, issue_data, command, dispatch_token)
+
+            # 更新 comment 检查时间
+            issue_state['last_comment_check'] = datetime.now().isoformat()
+
+    save_state(state)
 
 
 def process_all_repos():
@@ -315,6 +454,9 @@ def process_all_repos():
     log(f"✅ Monitoring cycle completed")
     log(f"   Triggered: {triggered_count} issues")
     log(f"   Processed issues in state: {len(state.get('processed_issues', {}))}")
+
+    # 检查已处理的 Issue 是否有新的命令评论
+    check_commands_on_tracked_issues(watch_token, dispatch_token, state)
 
 
 if __name__ == '__main__':
