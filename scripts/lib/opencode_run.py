@@ -25,7 +25,7 @@ from typing import Optional, Dict, Any
 DEFAULT_MODEL = os.getenv('AI_MODEL', 'alibaba-cn/glm-5.1')
 DEFAULT_AGENT = os.getenv('AI_AGENT', 'build')
 DEFAULT_EXTRA_RAW = os.getenv('AI_EXTRA_ARGS', '--dangerously-skip-permissions')
-DEFAULT_TIMEOUT = int(os.getenv('OPENCODE_TIMEOUT_MS', '3600000'))  # 60 分钟
+DEFAULT_TIMEOUT = int(os.getenv('OPENCODE_TIMEOUT_MS', '600000'))  # 10 分钟
 
 
 def log(msg: str):
@@ -125,9 +125,14 @@ def run_opencode(
         instruction or '',
         '',
         '## 输出要求',
-        f'请把最终结果写入文件: `{output_file}`',
-        '(写入完成后即可结束，无需在 stdout 重复输出全文)',
     ])
+    
+    if agent:
+        prompt_parts.append(f'请把最终结果写入文件: `{output_file}`')
+        prompt_parts.append('(写入完成后即可结束，无需在 stdout 重复输出全文)')
+    else:
+        prompt_parts.append('请直接在回复中输出完整的分析报告（仅 Markdown 正文）。')
+        prompt_parts.append('不要输出任何解释性前缀或后缀。')
     
     full_prompt = '\n'.join(prompt_parts)
     
@@ -142,7 +147,10 @@ def run_opencode(
     
     opencode_bin = os.getenv('OPENCODE_BIN', 'opencode')
     extra_args = extra_args_raw.split() if extra_args_raw else []
-    opencode_args = ['run', '-', '--model', model, '--agent', agent] + extra_args
+    opencode_args = ['run', '-', '--model', model]
+    if agent:
+        opencode_args.extend(['--agent', agent])
+    opencode_args.extend(extra_args)
     
     # 组装 bash 命令
     # stdbuf 行缓冲 → workflow 日志实时可见
@@ -253,12 +261,18 @@ def run_opencode(
         if process.returncode != 0:
             # 检查 outputFile 是否存在
             if not os.path.exists(output_file):
-                raise RuntimeError(
-                    f'opencode [{label}] exit {process.returncode} '
-                    f'但未生成 outputFile {output_file}。\n'
-                    f'stderr: {stderr_text[:2000]}\n'
-                    f'replay: cd {work_dir} && cat {prompt_dump_file} | {opencode_bin} {" ".join(opencode_args)}'
-                )
+                # 没有 agent 模式：将 stdout 写入 output_file
+                if not agent and stdout_text:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write(stdout_text)
+                    log(f'    📄 output written from stdout ({len(stdout_text)} chars)')
+                else:
+                    raise RuntimeError(
+                        f'opencode [{label}] exit {process.returncode} '
+                        f'但未生成 outputFile {output_file}。\n'
+                        f'stderr: {stderr_text[:2000]}\n'
+                        f'replay: cd {work_dir} && cat {prompt_dump_file} | {opencode_bin} {" ".join(opencode_args)}'
+                    )
             
             # 非零退出但文件存在，记录警告
             log(f'  ⚠ [{label}] exit={process.returncode} in {duration:.1f}s (outputFile 存在)')
@@ -267,11 +281,16 @@ def run_opencode(
         
         # 最终检查 outputFile
         if not os.path.exists(output_file):
-            raise RuntimeError(
-                f'opencode [{label}] exit {process.returncode} '
-                f'但未生成 outputFile {output_file}。\n'
-                f'replay: cd {work_dir} && cat {prompt_dump_file} | {opencode_bin} {" ".join(opencode_args)}'
-            )
+            if not agent and stdout_text:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(stdout_text)
+                log(f'  📄 output written from stdout ({len(stdout_text)} chars)')
+            else:
+                raise RuntimeError(
+                    f'opencode [{label}] exit {process.returncode} in {duration:.1f}s, '
+                    f'但未找到 outputFile {output_file}。\n'
+                    f'replay: cd {work_dir} && cat {prompt_dump_file} | {opencode_bin} {" ".join(opencode_args)}'
+                )
         
         return {
             'output_file': output_file,

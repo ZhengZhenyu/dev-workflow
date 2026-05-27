@@ -31,7 +31,7 @@ env:
   AI_MODEL: ${{ vars.AI_MODEL || 'alibaba-cn/glm-5.1' }}
   AI_AGENT: ${{ vars.AI_AGENT || 'build' }}
   AI_EXTRA_ARGS: ${{ vars.AI_EXTRA_ARGS || '--dangerously-skip-permissions' }}
-  OPENCODE_TIMEOUT_MS: ${{ vars.OPENCODE_TIMEOUT_MS || '3600000' }} # 60 分钟
+  OPENCODE_TIMEOUT_MS: ${{ vars.OPENCODE_TIMEOUT_MS || '600000' }} # 10 分钟
   
   # AI API 密钥（必需）
   DASHSCOPE_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
