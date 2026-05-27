@@ -14,6 +14,7 @@
 - **交互式进度管理**：自动维护 Issue 评论中的进度看板，实时更新分析状态
 - **人工审核关卡**：在关键节点设置审核关卡，确保设计质量
 - **命令控制**：支持通过 Issue 评论中的命令（`/accept`, `/retry`, `/retry-design`, `/retry-review`）控制流程
+- **跨仓库监控**：支持从其他仓库触发 AI 分析流程
 
 ## 项目结构
 
@@ -26,7 +27,8 @@
 │   │   ├── architect.md
 │   │   └── architecture-reviewer.md
 │   └── workflows/
-│       └── tech-design-trigger.yml   # 主工作流定义
+│       ├── tech-design-trigger.yml   # 主工作流定义
+│       └── cross-repo-dispatch.yml   # 跨仓库触发工作流
 ├── scripts/
 │   ├── lib/                 # Python 工具库
 │   │   ├── github_api.py
@@ -38,16 +40,65 @@
 │       ├── 01-requirements-analysis.py
 │       ├── 02-architecture-design.py
 │       └── 03-architecture-review.py
-└── requirements.txt
+├── requirements.txt
+└── CROSS-REPO-SETUP.md      # 跨仓库配置详细指南
 ```
 
 ## 使用方法
 
-### 触发分析流程
+### 方式一：本仓库内使用
 
-1. 在仓库中创建 Issue
+1. 在 dev-workflow 仓库中创建 Issue
 2. 为 Issue 添加 `rfc` 或 `bug` 标签
 3. AI 将自动开始执行技术设计分析流程
+
+### 方式二：跨仓库监控（推荐）
+
+当需要在其他仓库触发 AI 分析时：
+
+#### 1. 配置 GitHub Token
+
+**在 dev-workflow 仓库中配置：**
+- 创建 Personal Access Token (PAT)
+  - 权限：`repo` + `workflow`
+  - 路径：GitHub Settings → Developer settings → Personal access tokens
+- 添加到仓库 Secrets
+  - 路径：dev-workflow 仓库 → Settings → Secrets and variables → Actions
+  - Name: `DISPATCH_TOKEN`
+  - Secret: 粘贴生成的 token
+
+**在每个需要监控的源仓库中配置：**
+- 使用同一个 PAT
+- 添加到源仓库 Secrets
+  - 路径：源仓库 → Settings → Secrets and variables → Actions
+  - Name: `DISPATCH_TOKEN`
+  - Secret: 粘贴 token
+
+#### 2. 部署触发工作流到源仓库
+
+将 [`.github/workflows/cross-repo-dispatch.yml`](file:///Users/zhengzhenyu/work/dev-workflow/.github/workflows/cross-repo-dispatch.yml) 复制到源仓库的对应位置：
+
+```
+源仓库/
+└── .github/
+    └── workflows/
+        └── cross-repo-dispatch.yml
+```
+
+**重要**：编辑文件第 44 行，修改为目标仓库地址：
+```yaml
+https://api.github.com/repos/你的用户名/dev-workflow/dispatches
+```
+
+#### 3. 使用
+
+在**源仓库**中：
+1. 创建 Issue
+2. 添加 `rfc` 或 `bug` 标签
+3. 自动触发：
+   - ✅ 源 Issue 被打上 `ai-pending` 标签
+   - ✅ 源 Issue 收到进度看板评论
+   - ✅ dev-workflow 仓库开始执行 AI 分析
 
 ### 控制命令
 
@@ -76,6 +127,22 @@
 | `AI_AGENT` | AI Agent 类型 | `build` |
 | `AI_EXTRA_ARGS` | AI 运行额外参数 | `--dangerously-skip-permissions` |
 | `OPENCODE_TIMEOUT_MS` | OpenCode 超时时间（毫秒） | `1800000` (30分钟) |
+
+## 故障排查
+
+### Dispatch 失败（HTTP 401/403）
+- 检查 `DISPATCH_TOKEN` 是否正确配置
+- 确认 token 有 `repo` 和 `workflow` 权限
+
+### 目标仓库未收到 dispatch
+- 检查源仓库 Actions 日志
+- 确认目标仓库地址是否正确
+
+### 工作流未触发
+- 确认 Issue 标签是否为 `rfc` 或 `bug`
+- 检查工作流文件是否正确部署
+
+更多详细信息请参考 [CROSS-REPO-SETUP.md](file:///Users/zhengzhenyu/work/dev-workflow/CROSS-REPO-SETUP.md)
 
 ## 技术栈
 
