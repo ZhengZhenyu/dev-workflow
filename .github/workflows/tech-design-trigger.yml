@@ -424,7 +424,12 @@ jobs:
           ISSUE_TITLE: ${{ github.event.client_payload.issue_title }}
           ISSUE_BODY: ${{ github.event.client_payload.issue_body }}
           TARGET_REPO: ${{ github.event.client_payload.source_repo }}
-        run: python scripts/stages/01-requirements-analysis.py
+        run: |
+          # 让 build agent 能立即找到源代码
+          WORK_DIR="$HOME/tech-design-data/work/${{ github.event.client_payload.issue_number }}"
+          mkdir -p "$WORK_DIR"
+          ln -sf "$PWD/source-repo" "$WORK_DIR/source-repo"
+          python scripts/stages/01-requirements-analysis.py
 
       - name: Wait for user response (Phase 1)
         run: |
