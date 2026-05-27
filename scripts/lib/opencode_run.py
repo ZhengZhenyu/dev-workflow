@@ -25,7 +25,7 @@ from typing import Optional, Dict, Any
 DEFAULT_MODEL = os.getenv('AI_MODEL', 'alibaba-cn/glm-5.1')
 DEFAULT_AGENT = os.getenv('AI_AGENT', 'build')
 DEFAULT_EXTRA_RAW = os.getenv('AI_EXTRA_ARGS', '--dangerously-skip-permissions')
-DEFAULT_TIMEOUT = int(os.getenv('OPENCODE_TIMEOUT_MS', '1800000'))  # 30 分钟
+DEFAULT_TIMEOUT = int(os.getenv('OPENCODE_TIMEOUT_MS', '3600000'))  # 60 分钟
 
 
 def log(msg: str):

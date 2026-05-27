@@ -98,6 +98,11 @@ async def main():
         conventions_file=get_conventions_file(),
     )
     
+    # 检查输出文件是否存在
+    if not os.path.exists(output_file):
+        log_stage('phase1', '⚠ 输出文件未生成（可能超时），跳过评论和状态更新')
+        return
+    
     # 评论 issue
     await comment_agent_output(
         owner=env['owner'],
