@@ -24,7 +24,7 @@ from scripts.lib.stage_common import (
     log_stage,
     get_conventions_file,
 )
-from scripts.lib.work_context import ensure_work_dir, read_file
+from scripts.lib.work_context import ensure_work_dir, read_file, restore_phase_output
 
 
 async def main():
@@ -41,10 +41,28 @@ async def main():
     )
 
     requirements_md = read_file(env['issue_number'], '01-requirements-analysis.md')
+    if not requirements_md:
+        log_stage('arch-review', '本地文件缺失，尝试从 Issue 评论恢复 req-analysis')
+        requirements_md = restore_phase_output(
+            env['issue_number'], 'req-analysis',
+            env['owner'], env['repo'],
+        )
+
     architecture_md = read_file(env['issue_number'], '02-architecture-design.md')
+    if not architecture_md:
+        log_stage('arch-review', '本地文件缺失，尝试从 Issue 评论恢复 arch-design')
+        architecture_md = restore_phase_output(
+            env['issue_number'], 'arch-design',
+            env['owner'], env['repo'],
+        )
 
     if not requirements_md or not architecture_md:
-        raise RuntimeError('需求分析或架构设计未找到，请先完成前序阶段')
+        missing = []
+        if not requirements_md:
+            missing.append('需求分析')
+        if not architecture_md:
+            missing.append('架构设计')
+        raise RuntimeError(f'{", ".join(missing)}未找到（本地+Issue评论均无），请先完成前序阶段')
 
     result = run_opencode(
         prompt_file=agent_prompt_file('architecture-reviewer'),
