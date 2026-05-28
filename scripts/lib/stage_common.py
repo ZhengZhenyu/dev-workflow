@@ -144,11 +144,13 @@ async def publish_progress_board(
     
     board += f'\n### 🔧 控制命令\n\n'
     board += f'| 命令 | 用途 |\n|------|------|\n'
-    board += f'| `/accept` | 从头开始完整分析 |\n'
-    board += f'| `/retry` | 从上次中断处续跑 |\n'
-    board += f'| `/retry-design` | 重跑架构设计 |\n'
+    board += f'| `/analyze` | 启动分析（未追踪的 Issue） |\n'
+    board += f'| `/accept` | 确认当前阶段，进入下一阶段 |\n'
+    board += f'| `/retry` | 重跑当前失败阶段 |\n'
+    board += f'| `/skip` | 跳过当前阶段 |\n'
+    board += f'| `/retry-req` | 重跑需求分析 |\n'
+    board += f'| `/retry-arch` | 重跑架构设计 |\n'
     board += f'| `/retry-review` | 重跑架构评审 |\n'
-    board += f'| `/skip-review` | 跳过评审，接受当前设计 |\n'
     
     board += f'\n---\n<sub>🤖 tech-design-team · {ts_now()}</sub>'
     

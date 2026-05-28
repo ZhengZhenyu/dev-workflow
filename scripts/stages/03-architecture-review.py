@@ -32,7 +32,7 @@ async def main():
     work_dir = ensure_work_dir(env['issue_number'])
     output_file = os.path.join(work_dir, '03-architecture-review.md')
 
-    log_stage('phase3', f'issue={env["issue_number"]}, work_dir={work_dir}')
+    log_stage('arch-review', f'issue={env["issue_number"]}, work_dir={work_dir}')
 
     issue = get_issue(
         owner=env['owner'],
@@ -59,7 +59,7 @@ async def main():
         instruction='基于需求分析和架构设计两份文档，产出完整的架构评审报告，必须包含 Verdict Marker。',
         work_dir=work_dir,
         output_file=output_file,
-        label='phase3',
+        label='arch-review',
         conventions_file=get_conventions_file(),
     )
 
@@ -77,10 +77,10 @@ async def main():
         repo=env['repo'],
         issue_number=env['issue_number'],
         output_file=output_file,
-        heading=f'## Phase 3: 架构评审报告\n\n**Issue**: #{env["issue_number"]} - {issue.get("title", "")}\n**Verdict**: {verdict}\n\n---',
+        heading=f'## 架构评审报告 (arch-review)\n\n**Issue**: #{env["issue_number"]} - {issue.get("title", "")}\n**Verdict**: {verdict}\n\n---',
     )
 
-    log_stage('phase3', f'✅ done, verdict={verdict}')
+    log_stage('arch-review', f'✅ done, verdict={verdict}')
 
 
 if __name__ == '__main__':

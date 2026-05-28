@@ -32,7 +32,7 @@ async def main():
     work_dir = ensure_work_dir(env['issue_number'])
     output_file = os.path.join(work_dir, '02-architecture-design.md')
 
-    log_stage('phase2', f'issue={env["issue_number"]}, work_dir={work_dir}')
+    log_stage('arch-design', f'issue={env["issue_number"]}, work_dir={work_dir}')
 
     issue = get_issue(
         owner=env['owner'],
@@ -42,7 +42,7 @@ async def main():
 
     requirements_md = read_file(env['issue_number'], '01-requirements-analysis.md')
     if not requirements_md:
-        raise RuntimeError('需求分析报告未找到，请先运行 Phase 1')
+        raise RuntimeError('需求分析报告未找到，请先运行 req-analysis')
 
     result = run_opencode(
         prompt_file=agent_prompt_file('architect'),
@@ -56,7 +56,7 @@ async def main():
         instruction='基于需求分析报告，产出完整的架构设计报告，必须使用 4+1 视图模型。',
         work_dir=work_dir,
         output_file=output_file,
-        label='phase2',
+        label='arch-design',
         conventions_file=get_conventions_file(),
     )
 
@@ -65,10 +65,10 @@ async def main():
         repo=env['repo'],
         issue_number=env['issue_number'],
         output_file=output_file,
-        heading=f'## Phase 2: 架构设计报告\n\n**Issue**: #{env["issue_number"]} - {issue.get("title", "")}\n\n---',
+        heading=f'## 架构设计报告 (arch-design)\n\n**Issue**: #{env["issue_number"]} - {issue.get("title", "")}\n\n---',
     )
 
-    log_stage('phase2', '✅ done')
+    log_stage('arch-design', '✅ done')
 
 
 if __name__ == '__main__':

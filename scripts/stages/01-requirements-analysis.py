@@ -32,7 +32,7 @@ async def main():
     work_dir = ensure_work_dir(env['issue_number'])
     output_file = os.path.join(work_dir, '01-requirements-analysis.md')
 
-    log_stage('phase1', f'issue={env["issue_number"]}, work_dir={work_dir}')
+    log_stage('req-analysis', f'issue={env["issue_number"]}, work_dir={work_dir}')
 
     issue = get_issue(
         owner=env['owner'],
@@ -52,7 +52,7 @@ async def main():
         instruction='基于 Issue 内容，产出完整的需求分析报告。',
         work_dir=work_dir,
         output_file=output_file,
-        label='phase1',
+        label='req-analysis',
         conventions_file=get_conventions_file(),
     )
 
@@ -61,10 +61,10 @@ async def main():
         repo=env['repo'],
         issue_number=env['issue_number'],
         output_file=output_file,
-        heading=f'## Phase 1: 需求分析报告\n\n**Issue**: #{env["issue_number"]} - {issue.get("title", "")}\n\n---',
+        heading=f'## 需求分析报告 (req-analysis)\n\n**Issue**: #{env["issue_number"]} - {issue.get("title", "")}\n\n---',
     )
 
-    log_stage('phase1', '✅ done')
+    log_stage('req-analysis', '✅ done')
 
 
 if __name__ == '__main__':

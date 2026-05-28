@@ -16,6 +16,17 @@ import sys
 import json
 import requests
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+from scripts.lib.state_machine import (
+    ALL_AI_LABELS,
+    LABEL_COLORS,
+    LABEL_DESCRIPTIONS,
+    NEXT_PHASE,
+    PHASE_DISPLAY,
+    build_label,
+)
+
 
 def get_token():
     return os.getenv('GITHUB_TOKEN', '')
@@ -62,33 +73,6 @@ def split_repo(repo_full):
     return parts[0], parts[1]
 
 
-# ── Label 操作 ──
-
-AI_LABELS = [
-    'ai-pending',
-    'ai-phase1', 'ai-phase1-done', 'ai-phase1-fail',
-    'ai-phase2', 'ai-phase2-done', 'ai-phase2-fail',
-    'ai-phase3', 'ai-phase3-done', 'ai-phase3-fail',
-    'ai-done',
-]
-
-LABEL_COLORS = {
-    'ai-pending': 'bfd4f2',
-    'ai-phase1': '0052cc', 'ai-phase1-done': '0e8a16', 'ai-phase1-fail': 'd73a4a',
-    'ai-phase2': '0052cc', 'ai-phase2-done': '0e8a16', 'ai-phase2-fail': 'd73a4a',
-    'ai-phase3': '0052cc', 'ai-phase3-done': '0e8a16', 'ai-phase3-fail': 'd73a4a',
-    'ai-done': '5319e7',
-}
-
-
-def build_label(phase: str, status: str) -> str:
-    if phase == 'done':
-        return 'ai-done'
-    if status == 'running':
-        return f'ai-{phase}'
-    return f'ai-{phase}-{status}'
-
-
 def set_issue_label(owner: str, repo: str, issue_number: int, phase: str, status: str):
     url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}"
     resp = requests.get(url, headers=get_headers(), timeout=30)
@@ -109,7 +93,7 @@ def set_issue_label(owner: str, repo: str, issue_number: int, phase: str, status
 
 
 def ensure_labels_exist(owner: str, repo: str):
-    for label in AI_LABELS:
+    for label in ALL_AI_LABELS:
         url = f"https://api.github.com/repos/{owner}/{repo}/labels/{label}"
         try:
             resp = requests.get(url, headers=get_headers(), timeout=15)
@@ -120,13 +104,15 @@ def ensure_labels_exist(owner: str, repo: str):
         requests.post(
             f"https://api.github.com/repos/{owner}/{repo}/labels",
             headers=get_headers(),
-            json={'name': label, 'color': LABEL_COLORS.get(label, 'bfd4f2')},
+            json={
+                'name': label,
+                'color': LABEL_COLORS.get(label, 'bfd4f2'),
+                'description': LABEL_DESCRIPTIONS.get(label, f'AI analysis: {label}'),
+            },
             timeout=15,
         )
         print(f'  🏷️  Created label: {label}')
 
-
-# ── 命令入口 ──
 
 def cmd_add_labels():
     params = get_params()
@@ -177,7 +163,11 @@ def cmd_post_board():
     owner, repo = split_repo(params['source_repo'])
     issue_number = int(params['issue_number'])
 
-    stages = {'phase1': 'in_progress', 'phase2': 'pending', 'phase3': 'pending'}
+    stages = {
+        'req-analysis': 'in_progress',
+        'arch-design': 'pending',
+        'arch-review': 'pending',
+    }
     _ensure_board(owner, repo, issue_number, params['issue_title'], params['source_repo'], stages)
     print(f'✅ Board posted to {owner}/{repo}#{issue_number}')
 
@@ -197,8 +187,8 @@ def cmd_update_board():
     stages[phase] = status
 
     if status == 'done':
-        next_phase = {'phase1': 'phase2', 'phase2': 'phase3'}.get(phase)
-        if next_phase and stages.get(next_phase, 'pending') == 'pending':
+        next_phase = NEXT_PHASE.get(phase)
+        if next_phase and next_phase != 'done' and stages.get(next_phase, 'pending') == 'pending':
             stages[next_phase] = 'in_progress'
 
     _ensure_board(owner, repo, issue_number, params['issue_title'], params['source_repo'], stages)
@@ -236,9 +226,13 @@ def cmd_self_dispatch():
         sys.exit(1)
 
 
-# ── 看板 ──
-
 BOARD_MARKER = '🤖 tech-design-team · 分析进度'
+
+BOARD_PHASE_MAP = {
+    '需求分析': 'req-analysis',
+    '架构设计': 'arch-design',
+    '架构评审': 'arch-review',
+}
 
 
 def _find_board_comment(owner, repo, issue_number):
@@ -255,7 +249,7 @@ def _find_board_comment(owner, repo, issue_number):
 def _read_board_stages(owner, repo, issue_number):
     comment = _find_board_comment(owner, repo, issue_number)
     if not comment:
-        return {'phase1': 'pending', 'phase2': 'pending', 'phase3': 'pending'}
+        return {'req-analysis': 'pending', 'arch-design': 'pending', 'arch-review': 'pending'}
 
     body = comment.get('body', '')
     status_emoji = {
@@ -264,11 +258,10 @@ def _read_board_stages(owner, repo, issue_number):
     }
 
     stages = {}
-    phase_map = {'Phase 1': 'phase1', 'Phase 2': 'phase2', 'Phase 3': 'phase3'}
 
     for line in body.split('\n'):
-        for phase_name, phase_key in phase_map.items():
-            if phase_name in line:
+        for display_name, phase_key in BOARD_PHASE_MAP.items():
+            if display_name in line:
                 for emoji, status_key in status_emoji.items():
                     if emoji in line:
                         stages[phase_key] = status_key
@@ -277,7 +270,7 @@ def _read_board_stages(owner, repo, issue_number):
                     stages[phase_key] = 'pending'
                 break
 
-    for k in ['phase1', 'phase2', 'phase3']:
+    for k in ['req-analysis', 'arch-design', 'arch-review']:
         if k not in stages:
             stages[k] = 'pending'
 
@@ -303,20 +296,21 @@ def _build_board_body(issue_number, issue_title, source_repo, stages):
         '',
         '| 阶段 | 状态 |',
         '|------|------|',
-        f'| Phase 1 · 需求分析 | {s("phase1")} |',
-        f'| Phase 2 · 架构设计 | {s("phase2")} |',
-        f'| Phase 3 · 架构评审 | {s("phase3")} |',
+        f'| 需求分析 (req-analysis) | {s("req-analysis")} |',
+        f'| 架构设计 (arch-design) | {s("arch-design")} |',
+        f'| 架构评审 (arch-review) | {s("arch-review")} |',
         '',
         '### 🔧 控制命令',
         '',
         '| 命令 | 用途 |',
         '|------|------|',
-        '| `/accept` | 进入下一阶段 |',
-        '| `/retry` | 重跑当前阶段 |',
+        '| `/analyze` | 启动分析（未追踪的 Issue） |',
+        '| `/accept` | 确认当前阶段，进入下一阶段 |',
+        '| `/retry` | 重跑当前失败阶段 |',
         '| `/skip` | 跳过当前阶段 |',
-        '| `/retry-phase1` | 重跑需求分析 |',
-        '| `/retry-phase2` | 重跑架构设计 |',
-        '| `/retry-phase3` | 重跑架构评审 |',
+        '| `/retry-req` | 重跑需求分析 |',
+        '| `/retry-arch` | 重跑架构设计 |',
+        '| `/retry-review` | 重跑架构评审 |',
     ])
 
 

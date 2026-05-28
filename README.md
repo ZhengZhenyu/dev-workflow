@@ -4,17 +4,17 @@
 
 ## 功能特性
 
-- **自动化技术设计流程**：当 Issue 被标记为 `rfc` 或 `bug` 时，自动触发完整的 AI 分析流程
-- **多阶段智能分析**：通过 AI agent 依次执行 5 个阶段的技术设计分析
-  - Phase 0：需求澄清
-  - Phase 1：需求分析
-  - Phase 2：架构设计
-  - Phase 3：架构评审
-  - 最终设计文档生成
+- **自动化技术设计流程**：当 Issue 被标记为指定标签或用户评论 `/analyze` 时，自动触发 AI 分析流程
+- **多阶段智能分析**：通过 AI agent 依次执行 3 个阶段的技术设计分析
+  - req-analysis：需求分析
+  - arch-design：架构设计
+  - arch-review：架构评审
 - **交互式进度管理**：自动维护 Issue 评论中的进度看板，实时更新分析状态
 - **人工审核关卡**：在关键节点设置审核关卡，确保设计质量
-- **命令控制**：支持通过 Issue 评论中的命令（`/accept`, `/retry`, `/retry-design`, `/retry-review`）控制流程
+- **命令控制**：支持通过 Issue 评论中的命令控制流程
 - **跨仓库监控**：支持从其他仓库触发 AI 分析流程
+- **灵活触发模式**：支持 label 触发、命令触发、混合触发三种模式
+- **Stuck 检测**：自动检测长时间运行未完成的阶段，标记失败并通知用户
 
 ## 项目结构
 
@@ -22,34 +22,87 @@
 .
 ├── .github/
 │   ├── agents/              # AI Agent 提示词配置
-│   │   ├── phase0-clarification.md
 │   │   ├── requirement-analyst.md
 │   │   ├── architect.md
 │   │   └── architecture-reviewer.md
+│   │   └── phase0-clarification.md
 │   └── workflows/
-│       ├── tech-design-trigger.yml   # 主工作流定义
-│       └── cross-repo-dispatch.yml   # 跨仓库触发工作流
+│       ├── stream-events.yml          # Issue 监控工作流
+│       └── tech-design-trigger.yml    # AI 分析链路工作流
+├── config/
+│   └── watchlist.json                 # 监控仓库配置
 ├── scripts/
-│   ├── lib/                 # Python 工具库
+│   ├── lib/                           # Python 工具库
+│   │   ├── state_machine.py           # 状态机权威定义（phase名、label正则、命令映射）
 │   │   ├── github_api.py
+│   │   ├── issue_tracker.py
 │   │   ├── opencode_run.py
+│   │   ├── phase_helper.py
 │   │   ├── stage_common.py
-│   │   └── work_context.py
-│   └── stages/              # 各阶段执行脚本
-│       ├── 00-phase0-clarification.py
-│       ├── 01-requirements-analysis.py
-│       ├── 02-architecture-design.py
-│       └── 03-architecture-review.py
+│   │   ├── work_context.py
+│   │   └── discover_conventions.py
+│   ├── stages/                        # 各阶段执行脚本
+│   │   ├── 01-requirements-analysis.py
+│   │   ├── 02-architecture-design.py
+│   │   └── 03-architecture-review.py
+│   └── watch/
+│       └── process_events.py          # Issue 监控 + 命令处理
 ├── requirements.txt
-└── CROSS-REPO-SETUP.md      # 跨仓库配置详细指南
+└── config/watchlist.json
 ```
 
+## 状态机与 Label 体系
+
+所有状态定义集中管理在 `scripts/lib/state_machine.py`，其他模块统一引用。
+
+### Phase 语义化命名
+
+| Phase ID | 中文名 | 旧名称 | Label 示例 |
+|---|---|---|---|
+| `req-analysis` | 需求分析 | phase1 | `ai-req-analysis`, `ai-req-analysis-done` |
+| `arch-design` | 架构设计 | phase2 | `ai-arch-design`, `ai-arch-design-fail` |
+| `arch-review` | 架构评审 | phase3 | `ai-arch-review`, `ai-arch-review-done` |
+
+### 状态流转
+
+```
+/analyze（未追踪）→ init → req-analysis（自动）→ arch-design（/accept）→ arch-review（/accept）→ done
+                                        ↓ fail                ↓ fail              ↓ fail
+                                    /retry 或 /skip        /retry 或 /skip      /retry 或 /skip
+```
+
+- `init` 到 `req-analysis` 自动推进
+- `req-analysis-done` 到 `arch-design` 需用户 `/accept` 确认
+- `arch-design-done` 到 `arch-review` 需用户 `/accept` 确认
+
+### 控制命令
+
+| 命令 | 说明 |
+|------|------|
+| `/analyze` | 启动分析（未追踪的 Issue，命令触发模式下使用） |
+| `/accept` | 确认当前阶段完成，进入下一阶段 |
+| `/retry` | 重跑当前失败阶段 |
+| `/skip` | 跳过当前失败/完成阶段 |
+| `/retry-req` | 重跑需求分析 |
+| `/retry-arch` | 重跑架构设计 |
+| `/retry-review` | 重跑架构评审 |
+
 ## 使用方法
+
+### 触发模式
+
+`config/watchlist.json` 中每个仓库支持 `trigger_mode` 配置：
+
+| trigger_mode | 说明 |
+|---|---|
+| `label` | **默认**：有 trigger_labels 的 Issue 自动触发 |
+| `command` | 仅当用户在 Issue 评论 `/analyze` 才触发 |
+| `both` | 同时支持 label 自动触发和 `/analyze` 命令触发 |
 
 ### 方式一：本仓库内使用
 
 1. 在 dev-workflow 仓库中创建 Issue
-2. 为 Issue 添加 `rfc` 或 `bug` 标签
+2. 为 Issue 添加 `feature` 或 `bug` 标签（或在评论中 `/analyze`）
 3. AI 将自动开始执行技术设计分析流程
 
 ### 方式二：跨仓库监控（推荐，零配置）
@@ -72,14 +125,15 @@
 
 #### 2. 配置监控仓库列表
 
-编辑 [`config/watchlist.json`](file:///Users/zhengzhenyu/work/dev-workflow/config/watchlist.json)，添加需要监控的仓库：
+编辑 `config/watchlist.json`，添加需要监控的仓库：
 
 ```json
 {
   "watched_repos": [
     {
       "repo": "owner/repo-name",
-      "trigger_labels": ["rfc", "bug"],
+      "trigger_labels": ["feature", "bug"],
+      "trigger_mode": "label",
       "enabled": true,
       "description": "项目描述"
     }
@@ -97,10 +151,9 @@
 | 字段 | 说明 | 示例 |
 |------|------|------|
 | `repo` | 仓库地址 | `owner/repo-name` |
-| `trigger_labels` | 触发标签 | `["rfc", "bug"]` |
+| `trigger_labels` | 触发标签 | `["feature", "bug"]` |
+| `trigger_mode` | 触发模式 | `label` / `command` / `both` |
 | `enabled` | 是否启用 | `true` / `false` |
-| `poll_interval_minutes` | 轮询间隔（分钟） | `5` |
-| `lookback_minutes` | 每次查询回溯时间（分钟） | `10` |
 
 #### 3. 提供项目规范（可选但推荐）
 
@@ -119,25 +172,23 @@ AI 会在分析时自动读取并遵守这些规范。
 
 #### 4. 使用
 
-在**源仓库**中：
-1. 创建 Issue
-2. 添加 `rfc` 或 `bug` 标签
-3. 等待最多 5 分钟（轮询间隔），自动触发：
-   - ✅ 源 Issue 被打上 `ai-pending` 标签
-   - ✅ 源 Issue 收到进度看板评论
-   - ✅ dev-workflow 仓库开始执行 AI 分析
-   - ✅ AI 会读取并遵守项目规范
+**label 模式（默认）：**
 
-### 控制命令
+1. 在源仓库创建 Issue
+2. 添加 `feature` 或 `bug` 标签
+3. 等待最多 5 分钟（轮询间隔），自动触发
 
-在 Issue 评论中使用以下命令控制流程：
+**command 模式：**
 
-| 命令 | 说明 |
-|------|------|
-| `/accept` | 从头开始完整分析 |
-| `/retry` | 从上次中断处继续 |
-| `/retry-design` | 重新运行架构设计阶段 |
-| `/retry-review` | 重新运行架构评审阶段 |
+1. 在源仓库创建 Issue
+2. 在 Issue 评论中输入 `/analyze`
+3. 等待最多 5 分钟，自动触发
+
+触发后：
+- ✅ 源 Issue 被打上 `ai-pending` 标签
+- ✅ 源 Issue 收到进度看板评论
+- ✅ dev-workflow 仓库开始执行 AI 分析
+- ✅ AI 会读取并遵守项目规范
 
 ## 环境要求
 
@@ -156,7 +207,7 @@ AI 会在分析时自动读取并遵守这些规范。
 | `AI_MODEL` | AI 模型名称 | `alibaba-cn/glm-5.1` |
 | `AI_AGENT` | AI Agent 类型 | `build` |
 | `AI_EXTRA_ARGS` | AI 运行额外参数 | `--dangerously-skip-permissions` |
-| `OPENCODE_TIMEOUT_MS` | OpenCode 超时时间（毫秒） | `1800000` (30分钟) |
+| `OPENCODE_TIMEOUT_MS` | OpenCode 超时时间（毫秒） | `600000` (10分钟) |
 | `OPENAI_BASE_URL` | AI API 基础地址（可选） | 留空使用默认地址 |
 
 #### Secrets（敏感配置）
@@ -208,8 +259,13 @@ AI 会在分析时自动读取并遵守这些规范。
 - 确认目标仓库地址是否正确
 
 ### 工作流未触发
-- 确认 Issue 标签是否为 `rfc` 或 `bug`
+- label 模式：确认 Issue 标签是否为 `feature` 或 `bug`
+- command 模式：确认是否评论了 `/analyze`
 - 检查工作流文件是否正确部署
+
+### Stuck 检测
+- 如果某个阶段运行超过 60 分钟仍未完成，系统会自动标记为失败
+- 查看 Issue 评论中的 stuck 通知，使用 `/retry` 或 `/skip` 处理
 
 更多详细信息请参考 [CROSS-REPO-SETUP.md](file:///Users/zhengzhenyu/work/dev-workflow/CROSS-REPO-SETUP.md)
 

@@ -91,21 +91,6 @@ def remove_label(owner: str, repo: str, issue_number: int, label: str) -> Option
         return None
 
 
-def set_stage_label(owner: str, repo: str, issue_number: int, new_stage: Optional[str] = None) -> None:
-    """设置 stage 标签（移除旧的，添加新的）"""
-    # 移除所有旧的 stage: 标签
-    labels_to_remove = [
-        'stage:phase0', 'stage:phase1', 'stage:phase2',
-        'stage:phase3', 'stage:phase4', 'stage:review'
-    ]
-    for label in labels_to_remove:
-        remove_label(owner, repo, issue_number, label)
-    
-    # 添加新标签
-    if new_stage:
-        add_labels(owner, repo, issue_number, labels=[new_stage])
-
-
 def get_issue_labels(owner: str, repo: str, issue_number: int) -> List[str]:
     """获取 Issue 的所有标签"""
     issue = get_issue(owner, repo, issue_number)

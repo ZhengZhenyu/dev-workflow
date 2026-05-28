@@ -73,15 +73,15 @@ jobs:
       - name: Post progress board
         run: python scripts/lib/phase_helper.py post-board
 
-      - name: Auto-trigger Phase 1
-        run: python scripts/lib/phase_helper.py self-dispatch phase1
+      - name: Auto-trigger req-analysis
+        run: python scripts/lib/phase_helper.py self-dispatch req-analysis
 
-  phase1:
+  req-analysis:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'repository_dispatch' &&
       github.event.action == 'run-phase' &&
-      github.event.client_payload.phase == 'phase1'
+      github.event.client_payload.phase == 'req-analysis'
     env:
       SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
       ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
@@ -127,9 +127,9 @@ jobs:
           ln -sf "$(pwd)/source-conventions.md" "$HOME/tech-design-data/work/$ISSUE_NUMBER/source-conventions.md"
 
       - name: Mark phase running
-        run: python scripts/lib/phase_helper.py set-label phase1 running
+        run: python scripts/lib/phase_helper.py set-label req-analysis running
 
-      - name: Run Phase 1
+      - name: Run 需求分析
         env:
           GITHUB_TOKEN: ${{ secrets.WATCH_TOKEN || secrets.DISPATCH_TOKEN }}
           TARGET_REPO: ${{ github.event.client_payload.source_repo }}
@@ -137,18 +137,18 @@ jobs:
 
       - name: Update progress board
         if: success()
-        run: python scripts/lib/phase_helper.py update-board phase1 done
+        run: python scripts/lib/phase_helper.py update-board req-analysis done
 
       - name: Mark failed
         if: failure()
-        run: python scripts/lib/phase_helper.py update-board phase1 failed
+        run: python scripts/lib/phase_helper.py update-board req-analysis failed
 
-  phase2:
+  arch-design:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'repository_dispatch' &&
       github.event.action == 'run-phase' &&
-      github.event.client_payload.phase == 'phase2'
+      github.event.client_payload.phase == 'arch-design'
     env:
       SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
       ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
@@ -194,9 +194,9 @@ jobs:
           ln -sf "$(pwd)/source-conventions.md" "$HOME/tech-design-data/work/$ISSUE_NUMBER/source-conventions.md"
 
       - name: Mark phase running
-        run: python scripts/lib/phase_helper.py set-label phase2 running
+        run: python scripts/lib/phase_helper.py set-label arch-design running
 
-      - name: Run Phase 2
+      - name: Run 架构设计
         env:
           GITHUB_TOKEN: ${{ secrets.WATCH_TOKEN || secrets.DISPATCH_TOKEN }}
           TARGET_REPO: ${{ github.event.client_payload.source_repo }}
@@ -204,18 +204,18 @@ jobs:
 
       - name: Update progress board
         if: success()
-        run: python scripts/lib/phase_helper.py update-board phase2 done
+        run: python scripts/lib/phase_helper.py update-board arch-design done
 
       - name: Mark failed
         if: failure()
-        run: python scripts/lib/phase_helper.py update-board phase2 failed
+        run: python scripts/lib/phase_helper.py update-board arch-design failed
 
-  phase3:
+  arch-review:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'repository_dispatch' &&
       github.event.action == 'run-phase' &&
-      github.event.client_payload.phase == 'phase3'
+      github.event.client_payload.phase == 'arch-review'
     env:
       SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
       ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
@@ -261,9 +261,9 @@ jobs:
           ln -sf "$(pwd)/source-conventions.md" "$HOME/tech-design-data/work/$ISSUE_NUMBER/source-conventions.md"
 
       - name: Mark phase running
-        run: python scripts/lib/phase_helper.py set-label phase3 running
+        run: python scripts/lib/phase_helper.py set-label arch-review running
 
-      - name: Run Phase 3
+      - name: Run 架构评审
         env:
           GITHUB_TOKEN: ${{ secrets.WATCH_TOKEN || secrets.DISPATCH_TOKEN }}
           TARGET_REPO: ${{ github.event.client_payload.source_repo }}
@@ -271,8 +271,8 @@ jobs:
 
       - name: Update progress board
         if: success()
-        run: python scripts/lib/phase_helper.py update-board phase3 done
+        run: python scripts/lib/phase_helper.py update-board arch-review done
 
       - name: Mark failed
         if: failure()
-        run: python scripts/lib/phase_helper.py update-board phase3 failed
+        run: python scripts/lib/phase_helper.py update-board arch-review failed

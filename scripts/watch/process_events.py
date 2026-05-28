@@ -2,26 +2,28 @@
 """
 Issue 监控 + 命令处理 — Label 驱动状态机
 
+触发模式 (trigger_mode):
+  label   — 传统模式: 有 trigger_labels 的 Issue 自动 dispatch init
+  command — 命令模式: 仅当用户在 Issue 评论 /analyze 才触发
+  both    — 混合模式: 同时支持 label 自动触发和 /analyze 命令触发
+
 状态持久化: GitHub Issue Labels (ai-*)
 每个 Issue 用 1 个 ai-* label 标记当前阶段+状态
 
 状态流转:
-  无 ai-* 标签 → dispatch init
-  ai-pending    → init job 会自动 dispatch phase1
-  ai-phase1-done + /accept → dispatch phase2
-  ai-phase2-done + /accept → dispatch phase3
-  ai-phase3-done + /accept → 标记完成
-  ai-phase*-fail + /retry → dispatch 对应 phase
-  ai-phase*-fail + /skip  → dispatch 下一 phase
+  /analyze (未追踪) → dispatch init
+  ai-pending → init 自动 dispatch req-analysis
+  ai-req-analysis-done + /accept → dispatch arch-design
+  ai-arch-design-done + /accept → dispatch arch-review
+  ai-arch-review-done + /accept → 标记完成
+  ai-*-fail + /retry → dispatch 对应 phase
+  ai-*-fail + /skip → dispatch 下一 phase
 
-命令检测安全网: 对比 label 状态与命令语义, 避免重复 dispatch
-  例: label=ai-phase1-done, 命令=/accept → dispatch phase2 ✓
-      label=ai-phase2,      命令=/accept → 已处理, 跳过 ✓
+Stuck 检测: running 状态超 60 分钟 → 自动标记 fail
 """
 
 import os
 import sys
-import re
 import json
 import requests
 from datetime import datetime, timezone
@@ -29,13 +31,23 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, PROJECT_ROOT)
+
+from scripts.lib.state_machine import (
+    PhaseState,
+    build_label,
+    parse_phase_from_labels,
+    is_tracked,
+    should_apply_command,
+    ALL_COMMANDS,
+    ENTRY_COMMAND,
+    PHASE_RETRY_COMMANDS,
+    PHASE_DISPLAY,
+    NEXT_PHASE,
+    STUCK_TIMEOUT_MINUTES,
+)
+
 WATCHLIST_FILE = os.path.join(PROJECT_ROOT, 'config', 'watchlist.json')
-
-LABEL_REGEX = re.compile(r'^ai-(phase[123]|done|pending)(?:-(done|fail))?$')
-
-NEXT_PHASE = {'phase1': 'phase2', 'phase2': 'phase3', 'phase3': 'done'}
-VALID_COMMANDS = ['/accept', '/retry', '/skip',
-                  '/retry-phase1', '/retry-phase2', '/retry-phase3']
 
 
 def log(msg: str):
@@ -48,23 +60,6 @@ def get_headers(token: str) -> Dict[str, str]:
         'Authorization': f'token {token}',
         'Accept': 'application/vnd.github.v3+json',
     }
-
-
-# ── Label 解析（自包含，不依赖 issue_tracker 模块） ──
-
-def parse_phase_from_labels(labels: List[str]) -> Optional[Dict[str, str]]:
-    """返回 {'phase': 'phase1', 'status': 'done'} 或 None"""
-    for label in labels:
-        m = LABEL_REGEX.match(label)
-        if m:
-            phase = m.group(1)
-            status = m.group(2) or 'running'
-            return {'phase': phase, 'status': status, 'label': label}
-    return None
-
-
-def is_tracked(labels: List[str]) -> bool:
-    return any(l.startswith('ai-') for l in labels)
 
 
 # ── GitHub API ──
@@ -100,6 +95,25 @@ def fetch_issues_with_labels(repo: str, trigger_labels: List[str], token: str,
     return all_issues
 
 
+def fetch_all_open_issues(repo: str, token: str, max_issues: int = 50) -> List[Dict[str, Any]]:
+    url = f"https://api.github.com/repos/{repo}/issues"
+    params = {
+        'state': 'open',
+        'per_page': min(max_issues, 100),
+        'sort': 'updated',
+        'direction': 'desc',
+    }
+    try:
+        resp = requests.get(url, headers=get_headers(token), params=params, timeout=30)
+        resp.raise_for_status()
+        issues = [i for i in resp.json() if 'pull_request' not in i]
+        log(f"  📊 Total open issues: {len(issues)}")
+        return issues
+    except Exception as e:
+        log(f"  ❌ Fetch issues failed: {e}")
+        return []
+
+
 def fetch_recent_comments(repo: str, issue_number: int, token: str,
                           count: int = 10) -> List[Dict[str, Any]]:
     url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
@@ -116,11 +130,10 @@ def fetch_recent_comments(repo: str, issue_number: int, token: str,
 # ── 命令解析 ──
 
 def parse_command_from_comments(comments: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
-    """从评论列表中查找最新的有效命令"""
     for comment in sorted(comments, key=lambda c: c.get('created_at', ''), reverse=True):
         body = (comment.get('body') or '').strip()
         first_line = body.split('\n')[0].strip()
-        for cmd in VALID_COMMANDS:
+        for cmd in ALL_COMMANDS:
             if first_line.startswith(cmd):
                 return {
                     'command': cmd,
@@ -131,52 +144,37 @@ def parse_command_from_comments(comments: List[Dict[str, Any]]) -> Optional[Dict
     return None
 
 
-def should_apply_command(command: str, label_state: Optional[Dict[str, str]]) -> Optional[str]:
-    """
-    判断命令是否应该执行, 返回目标 phase 或 None
-
-    label_state: {'phase': 'phase1', 'status': 'done'} 或 None (未追踪)
-
-    安全网: 如果 label 状态已经反映了命令的结果, 返回 None 避免重复
-    """
-    if label_state is None:
-        return None
-
-    current = label_state['phase']
-    status = label_state['status']
-
-    if current == 'done':
-        return None
-
-    # /accept: 仅在当前阶段 done 时推进到下一阶段
-    if command == '/accept':
-        if status == 'done':
-            return NEXT_PHASE.get(current)
-        # label 还是 running/fail → 还没 done, /accept 无效
-        return None
-
-    # /retry: 仅在当前阶段 failed 时重跑
-    if command == '/retry':
-        if status == 'fail':
-            return current
-        return None
-
-    # /skip: 仅在当前阶段 failed 或 done 时跳过
-    if command == '/skip':
-        if status in ('fail', 'done'):
-            nxt = NEXT_PHASE.get(current)
-            return nxt or 'done'
-        return None
-
-    # /retry-phase{1,2,3}: 显式重跑任意阶段, 无条件
-    if command == '/retry-phase1':
-        return 'phase1'
-    if command == '/retry-phase2':
-        return 'phase2'
-    if command == '/retry-phase3':
-        return 'phase3'
-
+def has_entry_command(comments: List[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+    for comment in sorted(comments, key=lambda c: c.get('created_at', ''), reverse=True):
+        body = (comment.get('body') or '').strip()
+        first_line = body.split('\n')[0].strip()
+        if first_line.startswith(ENTRY_COMMAND):
+            return {
+                'comment_id': str(comment['id']),
+                'comment_user': comment.get('user', {}).get('login', ''),
+                'created_at': comment.get('created_at', ''),
+            }
     return None
+
+
+# ── Stuck 检测 ──
+
+def check_stuck_phase(issue: Dict[str, Any], label_state: PhaseState) -> bool:
+    if not label_state.is_running or label_state.phase == 'done':
+        return False
+    updated_at = issue.get('updated_at', '')
+    if not updated_at:
+        return False
+    try:
+        updated_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        elapsed = (now - updated_time).total_seconds() / 60
+        if elapsed > STUCK_TIMEOUT_MINUTES:
+            log(f"  ⚠️ #{issue['number']}: stuck in {label_state.label} for {elapsed:.0f} min")
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ── Dispatch ──
@@ -207,6 +205,29 @@ def dispatch_phase(repo: str, issue: Dict[str, Any], phase: str, token: str) -> 
     except Exception as e:
         log(f"  ❌ Dispatch error: {e}")
         return False
+
+
+def mark_issue_stuck(repo: str, issue_number: int, label_state: PhaseState, token: str):
+    owner, name = repo.split('/')
+    url = f"https://api.github.com/repos/{owner}/{name}/issues/{issue_number}"
+    resp = requests.get(url, headers=get_headers(token), timeout=30)
+    resp.raise_for_status()
+    current_labels = [l['name'] for l in resp.json().get('labels', [])]
+
+    keep_labels = [l for l in current_labels if not l.startswith('ai-')]
+    keep_labels.append(build_label(label_state.phase, 'fail'))
+
+    labels_url = f"https://api.github.com/repos/{owner}/{name}/issues/{issue_number}/labels"
+    requests.put(labels_url, headers=get_headers(token), json={'labels': keep_labels}, timeout=30)
+
+    comment_url = f"https://api.github.com/repos/{owner}/{name}/issues/{issue_number}/comments"
+    body = f"⚠️ **Stuck detection**: {PHASE_DISPLAY.get(label_state.phase, label_state.phase)} "
+    body += f"运行超时 ({STUCK_TIMEOUT_MINUTES} min)，已自动标记为失败。\n"
+    body += f"请使用 `/retry` 重跑，或 `/skip` 跳过此阶段。"
+    requests.post(comment_url, headers=get_headers(token), json={'body': body}, timeout=30)
+
+    log(f"  🏷️ #{issue_number}: {label_state.label} → ai-{label_state.phase}-fail (stuck)")
+    return build_label(label_state.phase, 'fail')
 
 
 # ── 主流程 ──
@@ -240,18 +261,20 @@ def process_all():
 
     for repo_config in repos:
         repo = repo_config['repo']
-        trigger_labels = repo_config.get('trigger_labels', ['feature', 'bug'])
+        trigger_labels = repo_config.get('trigger_labels', [])
+        trigger_mode = repo_config.get('trigger_mode', 'label')
 
         if not repo_config.get('enabled', True):
             continue
 
         log(f"\n{'='*60}")
-        log(f"📦 {repo}")
+        log(f"📦 {repo} (mode={trigger_mode})")
 
-        issues = fetch_issues_with_labels(repo, trigger_labels, watch_token, max_events)
+        issues = _fetch_issues_by_mode(repo, trigger_labels, trigger_mode, watch_token, max_events)
 
         new_count = 0
         tracked_issues = []
+
         for issue in issues:
             labels = [l['name'] for l in issue.get('labels', [])]
 
@@ -259,18 +282,48 @@ def process_all():
                 tracked_issues.append(issue)
                 continue
 
-            new_count += 1
-            log(f"  🆕 #{issue['number']}: {issue.get('title', '')} → dispatching init")
-            dispatch_phase(repo, issue, 'init', dispatch_token)
+            if trigger_mode == 'label':
+                new_count += 1
+                log(f"  🆕 #{issue['number']}: {issue.get('title', '')} → dispatching init")
+                dispatch_phase(repo, issue, 'init', dispatch_token)
+                continue
+
+            if trigger_mode in ('command', 'both'):
+                comments = fetch_recent_comments(repo, issue['number'], watch_token)
+                entry = has_entry_command(comments)
+                if entry:
+                    new_count += 1
+                    log(f"  🆕 #{issue['number']}: /analyze by {entry['comment_user']} → dispatching init")
+                    dispatch_phase(repo, issue, 'init', dispatch_token)
+                else:
+                    log(f"  ⏭️ #{issue['number']}: no /analyze command, skip")
+                continue
 
         if new_count > 0:
             log(f"  📦 New issues dispatched: {new_count}")
-        log(f"  📋 Tracked issues to check for commands: {len(tracked_issues)}")
+        log(f"  📋 Tracked issues to check: {len(tracked_issues)}")
 
-        # ── 检查已追踪 Issue 上的命令 ──
         _check_commands_on_tracked_issues(repo, tracked_issues, watch_token, dispatch_token)
 
     log(f"\n✅ Cycle complete.")
+
+
+def _fetch_issues_by_mode(repo: str, trigger_labels: List[str], trigger_mode: str,
+                          token: str, max_events: int) -> List[Dict[str, Any]]:
+    if trigger_mode == 'command' and not trigger_labels:
+        return fetch_all_open_issues(repo, token, max_events)
+
+    if trigger_mode == 'command' and trigger_labels:
+        issues = fetch_issues_with_labels(repo, trigger_labels, token, max_events)
+        extra = fetch_all_open_issues(repo, token, max_events)
+        seen = {i['id'] for i in issues}
+        for i in extra:
+            if i['id'] not in seen:
+                issues.append(i)
+                seen.add(i['id'])
+        return issues
+
+    return fetch_issues_with_labels(repo, trigger_labels, token, max_events)
 
 
 def _check_commands_on_tracked_issues(repo: str, issues: List[Dict[str, Any]],
@@ -278,17 +331,19 @@ def _check_commands_on_tracked_issues(repo: str, issues: List[Dict[str, Any]],
     if not issues:
         return
 
-    log(f"  📝 Checking commands...")
+    log(f"  📝 Checking commands + stuck detection...")
 
     for issue in issues:
         issue_number = issue['number']
         labels = [l['name'] for l in issue.get('labels', [])]
         label_state = parse_phase_from_labels(labels)
 
-        if label_state is None:
+        if label_state.phase is None and label_state.status == 'pending':
             continue
 
-        if label_state['phase'] == 'pending' or label_state['status'] == 'running':
+        if label_state.is_running:
+            if check_stuck_phase(issue, label_state):
+                mark_issue_stuck(repo, issue_number, label_state, watch_token)
             continue
 
         comments = fetch_recent_comments(repo, issue_number, watch_token)
@@ -300,12 +355,12 @@ def _check_commands_on_tracked_issues(repo: str, issues: List[Dict[str, Any]],
         target = should_apply_command(command_info['command'], label_state)
 
         if target is None:
-            log(f"    ⏭️  #{issue_number}: {command_info['command']} "
-                f"(label={label_state['label']}, no-op)")
+            log(f"    ⏭️ #{issue_number}: {command_info['command']} "
+                f"(label={label_state.label}, no-op)")
             continue
 
         log(f"    🔔 #{issue_number}: {command_info['command']} → {target} "
-            f"(from {label_state['label']})")
+            f"(from {label_state.label})")
 
         if target == 'done':
             log(f"    ✅ #{issue_number}: all phases complete")
