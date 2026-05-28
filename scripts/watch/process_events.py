@@ -309,11 +309,7 @@ def process_all():
                 continue
 
             if trigger_mode in ('command', 'both'):
-                comments = fetch_recent_comments(repo, issue['number'], watch_token)
-                log(f"  💬 #{issue['number']}: fetched {len(comments)} comments")
-                for c in comments:
-                    preview = (c.get('body') or '')[:80].replace('\n', '\\n')
-                    log(f"     comment by {c.get('user', {}).get('login', '?')}: {preview}")
+                comments = fetch_all_comments(repo, issue['number'], watch_token)
                 entry = has_entry_command(comments)
                 if entry:
                     new_count += 1
